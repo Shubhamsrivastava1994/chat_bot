@@ -5,8 +5,8 @@
     // ===============================
     const link = document.createElement("link");
     link.rel = "stylesheet";
+    link.href = "https://chat-bot-c70y.onrender.com/chatbot.css";
     //link.href = "http://localhost:5001/chatbot.css";
-    link.href = "http://localhost:5001/chatbot.css";
     document.head.appendChild(link);
 
     // ===============================
