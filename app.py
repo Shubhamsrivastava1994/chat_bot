@@ -51,13 +51,15 @@ def generate_complaint_id():
 # Static Files
 # ===============================
 
-@app.route("/chatbot.css")
-def serve_css():
-    return send_from_directory(os.path.join(BASE_DIR, "../widget"), "chatbot.css")
-
 @app.route("/chatbot.js")
 def serve_js():
-    return send_from_directory(os.path.join(BASE_DIR, "../widget"), "chatbot.js")
+    widget_path = os.path.abspath(os.path.join(BASE_DIR, "..", "widget"))
+    return send_from_directory(widget_path, "chatbot.js")
+
+@app.route("/chatbot.css")
+def serve_css():
+    widget_path = os.path.abspath(os.path.join(BASE_DIR, "..", "widget"))
+    return send_from_directory(widget_path, "chatbot.css")
 
 @app.route("/")
 def home():
