@@ -75,7 +75,7 @@
             messages.innerHTML += `<div class="msg user">${msg}</div>`;
             scrollToBottom();
 
-            let res = await fetch("http://localhost:5001/chat",{
+            let res = await fetch("https://chat-bot-c70y.onrender.com/chat",{
                 method:"POST",
                 headers:{"Content-Type":"application/json"},
                 body:JSON.stringify({
