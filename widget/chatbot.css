@@ -114,3 +114,42 @@
 #chat-input::placeholder {
     color: #aaa;
 }
+
+.card-box{
+    background:#fff;
+    border-radius:10px;
+    padding:12px;
+    margin-top:8px;
+    box-shadow:0 2px 8px rgba(0,0,0,0.08);
+    font-size:14px;
+    }
+    
+    .card-title{
+    font-weight:bold;
+    margin-bottom:8px;
+    }
+    
+    .ticket-card{
+    background:#fff;
+    border-radius:12px;
+    padding:12px;
+    margin-top:8px;
+    box-shadow:0 3px 10px rgba(0,0,0,0.08);
+    }
+    
+    .ticket-header{
+    font-weight:bold;
+    margin-bottom:8px;
+    }
+    
+    .ticket-row{
+    margin:6px 0;
+    }
+    
+    .status-badge{
+    background:#fff3cd;
+    color:#856404;
+    padding:3px 8px;
+    border-radius:6px;
+    font-size:12px;
+    }
