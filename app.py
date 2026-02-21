@@ -5,194 +5,226 @@ import os
 import re
 import random
 from pymongo import MongoClient
-from dotenv import load_dotenv   # ✅ NEW
+from dotenv import load_dotenv
 
 app = Flask(__name__)
 CORS(app)
 
 # ===============================
-# CONFIG (ENV BASED)
+# CONFIG
 # ===============================
 
-# ✅ Load .env file
 load_dotenv()
 
-# 🔥 Pick from environment
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 MONGO_URI = os.getenv("MONGO_URI")
-
-# Optional safety check
-if not OPENROUTER_API_KEY:
-    raise ValueError("OPENROUTER_API_KEY missing in .env")
-
-if not MONGO_URI:
-    raise ValueError("MONGO_URI missing in .env")
 
 mongo_client = MongoClient(MONGO_URI)
 db = mongo_client["chatbotDB"]
 
 users_collection = db["users"]
 complaints_collection = db["complaints"]
+sessions_collection = db["sessions"]
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-user_sessions = {}
-registration_sessions = {}
-complaint_sessions = {}
+# ===============================
+# SESSION HELPERS
+# ===============================
 
-# ===============================
-# Utility
-# ===============================
+def get_session(user_id):
+    return sessions_collection.find_one({"user_id": user_id})
+
+def set_session(user_id, state, data=None):
+    sessions_collection.update_one(
+        {"user_id": user_id},
+        {"$set": {"state": state, "data": data or {}}},
+        upsert=True
+    )
+
+def clear_session(user_id):
+    sessions_collection.delete_one({"user_id": user_id})
 
 def generate_complaint_id():
     return f"CMP-{random.randint(10000,99999)}"
 
 # ===============================
-# Static Files
+# RESET SESSION
+# ===============================
+
+@app.route("/reset-session", methods=["POST"])
+def reset_session():
+    data = request.json
+    user_id = data.get("user_id")
+    clear_session(user_id)
+    return jsonify({"status":"session cleared"})
+
+# ===============================
+# STATIC
 # ===============================
 
 @app.route("/chatbot.js")
-@app.route("/chatbot.js")
 def serve_js():
-    widget_path = os.path.join(BASE_DIR, "widget")
-    return send_from_directory(widget_path, "chatbot.js")
+    return send_from_directory(os.path.join(BASE_DIR,"widget"),"chatbot.js")
 
 @app.route("/chatbot.css")
 def serve_css():
-    widget_path = os.path.join(BASE_DIR, "widget")
-    return send_from_directory(widget_path, "chatbot.css")
-
+    return send_from_directory(os.path.join(BASE_DIR,"widget"),"chatbot.css")
 
 @app.route("/")
 def home():
     return "Backend running successfully"
 
 # ===============================
-# MAIN CHAT ROUTE
+# CHAT ROUTE
 # ===============================
 
 @app.route("/chat", methods=["POST"])
 def chat():
 
-    data = request.json
-    user_message = data.get("message")
-    user_id = data.get("user_id", "default")
-    message_lower = user_message.lower()
+    data=request.json
+    user_message=data.get("message","")
+    user_id=data.get("user_id","default")
+    message_lower=user_message.lower()
+
+    session=get_session(user_id)
 
     # ===== REGISTRATION FLOW =====
 
-    if user_sessions.get(user_id) == "register_name":
-        registration_sessions[user_id] = {"name": user_message}
-        user_sessions[user_id] = "register_email"
-        return jsonify({"reply":"📧 Please enter your email."})
+    if session and session["state"]=="register_name":
+        set_session(user_id,"register_email",{"name":user_message})
+        return jsonify({"reply":"📧 Please enter your email address."})
 
-    if user_sessions.get(user_id) == "register_email":
-        registration_sessions[user_id]["email"] = user_message
-        user_sessions[user_id] = "register_account"
+    if session and session["state"]=="register_email":
+        s=session["data"]
+        s["email"]=user_message
+        set_session(user_id,"register_account",s)
         return jsonify({"reply":"🏦 Please enter your account number."})
 
-    if user_sessions.get(user_id) == "register_account":
-        registration_sessions[user_id]["account"] = user_message
-        user_sessions[user_id] = "register_address"
+    if session and session["state"]=="register_account":
+        s=session["data"]
+        s["account"]=user_message
+        set_session(user_id,"register_address",s)
         return jsonify({"reply":"📍 Please enter your address."})
 
-    if user_sessions.get(user_id) == "register_address":
-        registration_sessions[user_id]["address"] = user_message
-        users_collection.insert_one(registration_sessions[user_id])
-        user_sessions[user_id] = None
-        registration_sessions[user_id] = {}
-        return jsonify({"reply":"✅ Registration completed successfully!"})
+    if session and session["state"]=="register_address":
+        s=session["data"]
+        s["address"]=user_message
+        users_collection.insert_one(s)
+        clear_session(user_id)
+
+        return jsonify({"reply":"""
+🎉 <b>Registration Successful!</b><br>
+Your account has been created successfully 🙂
+"""})
 
     # ===== COMPLAINT FLOW =====
 
-    if user_sessions.get(user_id) == "complaint_issue":
-        complaint_sessions[user_id] = {"issue": user_message}
-        user_sessions[user_id] = "complaint_email"
-        return jsonify({"reply":"📧 Please provide your registered email for complaint tracking."})
+    if session and session["state"]=="complaint_issue":
+        set_session(user_id,"complaint_email",{"issue":user_message})
+        return jsonify({"reply":"📧 Enter registered email for complaint tracking."})
 
-    if user_sessions.get(user_id) == "complaint_email":
+    if session and session["state"]=="complaint_email":
 
-        email = user_message.strip().lower()
-        user = users_collection.find_one({"email": email})
+        email=user_message.lower()
+        user=users_collection.find_one({"email":email})
 
         if not user:
-            user_sessions[user_id] = "register_name"
-            return jsonify({"reply":"❌ Email not found.\n📝 Let's register you first.\nPlease enter your name."})
+            set_session(user_id,"register_name")
+            return jsonify({"reply":"❌ Email not found. Enter your name to register."})
 
-        complaint_id = generate_complaint_id()
-        issue_text = complaint_sessions[user_id]["issue"]
+        issue=session["data"]["issue"]
+        cid=generate_complaint_id()
 
         complaints_collection.insert_one({
-            "complaint_id": complaint_id,
-            "issue": issue_text,
-            "email": email,
-            "name": user.get("name","User"),
-            "status": "Pending"
+            "complaint_id":cid,
+            "issue":issue,
+            "email":email,
+            "status":"Pending"
         })
 
-        user_sessions[user_id] = None
-        complaint_sessions[user_id] = {}
+        clear_session(user_id)
 
-        return jsonify({
-            "reply": f"""
-<div class="complaint-card">
-<div class="ticket-title">✅ Complaint Registered Successfully</div>
+        return jsonify({"reply":f"""
+<div class="ticket-card">
 
-<div><b>🆔 Ticket ID:</b> {complaint_id}</div>
-<div><b>👤 Name:</b> {user.get('name','User')}</div>
-<div><b>📧 Email:</b> {email}</div>
+<div class="ticket-header">🎫 Complaint Registered Successfully</div>
 
-<div class="issue-box">
-<b>📝 Issue:</b><br>{issue_text}
-</div>
-
-<div class="status-badge">Pending</div>
+<div class="ticket-row">🆔 <b>Ticket ID:</b> {cid}</div>
+<div class="ticket-row">📧 <b>Email:</b> {email}</div>
+<div class="ticket-row">📌 <b>Status:</b> <span class="status-badge">Pending</span></div>
 
 <div class="ticket-note">
 Our support team will contact you soon 🙂
 </div>
+
 </div>
-"""
-        })
+"""})
 
-    # ===== REGISTRATION KEYWORDS =====
+    # ===== KEYWORDS =====
 
-    if any(word in message_lower for word in [
-        "register","create account","new account","open account","signup","sign up"
-    ]):
-        user_sessions[user_id] = "register_name"
-        return jsonify({"reply":"📝 Let's create your account.\nPlease enter your name."})
+    if "register" in message_lower:
+        set_session(user_id,"register_name")
+        return jsonify({"reply":"📝 Let's create your account. Enter your name."})
 
-    # ===== COMPLAINT KEYWORDS =====
-
-    if any(word in message_lower for word in [
-        "complaint","issue","problem","support","help"
-    ]):
-        user_sessions[user_id] = "complaint_issue"
+    if any(x in message_lower for x in ["complaint","issue","problem"]):
+        set_session(user_id,"complaint_issue")
         return jsonify({"reply":"🛠️ Please describe your issue."})
 
-    # ===== EMAIL FETCH =====
+    # ===== ACCOUNT DETAILS KEYWORDS (ADDED) =====
 
-    email_match = re.search(r"\S+@\S+\.\S+", user_message)
+    account_keywords = [
+        "account","account details","show account","check account",
+        "account info","account information","my account","account status",
+        "profile","my profile","my details","customer details",
+        "user details","bank details","account summary","view account",
+        "show profile","show my account","show my details",
+        "account overview","view my profile","display account"
+    ]
+
+    if any(keyword in message_lower for keyword in account_keywords):
+        return jsonify({"reply":"""
+<div class="card-box">
+
+<div class="card-title">👤 Account Information</div>
+
+🔐 For security reasons, please enter your <b>registered email address</b>.
+
+I will fetch your account details instantly 🙂
+
+</div>
+"""})
+
+    # ===== EMAIL FETCH (Beautiful Card) =====
+
+    email_match=re.search(r"\S+@\S+\.\S+",user_message)
 
     if email_match:
 
-        email = email_match.group().lower()
-        user = users_collection.find_one({"email": email})
+        email=email_match.group().lower()
+        user=users_collection.find_one({"email":email})
 
         if user:
+
             account=user.get("account","")
-            masked_account="XXXXXX"+account[-4:] if account else "N/A"
+            masked="XXXXXX"+account[-4:] if account else "N/A"
 
             return jsonify({"reply":f"""
-👋 Welcome back {user.get('name','User')}
+<div class="card-box">
 
-📧 {email}
-🏦 {masked_account}
-📍 {user.get('address','Not Available')}
+<div class="card-title">👋 Account Details</div>
+
+<div class="card-row">👤 <b>Name:</b> {user.get('name','User')}</div>
+<div class="card-row">📧 <b>Email:</b> {email}</div>
+<div class="card-row">🏦 <b>Account:</b> {masked}</div>
+<div class="card-row">📍 <b>Address:</b> {user.get('address','Not Available')}</div>
+
+<div class="card-footer">✅ Verified Customer</div>
+
+</div>
 """})
 
-        return jsonify({"reply":"❌ No account found for this email."})
+        return jsonify({"reply":"❌ No account found."})
 
     # ===== AI FALLBACK =====
 
@@ -205,7 +237,7 @@ Our support team will contact you soon 🙂
         json={
             "model":"openai/gpt-4o-mini",
             "messages":[
-                {"role":"system","content":"You are helpful banking assistant."},
+                {"role":"system","content":"You are professional banking assistant."},
                 {"role":"user","content":user_message}
             ]
         }
@@ -215,5 +247,6 @@ Our support team will contact you soon 🙂
 
     return jsonify({"reply":reply})
 
-if __name__ == "__main__":
+
+if __name__=="__main__":
     app.run()
